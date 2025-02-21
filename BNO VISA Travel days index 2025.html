@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BN(O) Visa Travel Tracker</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 1rem;
+    }
+    h1, h2 {
+      margin-bottom: 0.5rem;
+    }
+    label {
+      display: inline-block;
+      width: 120px;
+      margin-top: 0.5rem;
+    }
+    button {
+      margin-top: 0.5rem;
+      cursor: pointer;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 1rem;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 0.5rem;
+      text-align: center;
+    }
+    #warning {
+      color: red;
+      margin-top: 0.5rem;
+    }
+    #exceeding-periods {
+      color: red;
+      margin-top: 0.5rem;
+    }
+    #progress-bar {
+      width: 100%;
+      background-color: #eee;
+      height: 10px;
+      margin: 0.5rem 0;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    #progress {
+      background-color: #4ade80;
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s;
+    }
+    footer {
+      margin-top: 2rem;
+      text-align: center;
+      font-size: 0.9rem;
+      color: #666;
+    }
+    .buttons-row {
+      margin-top: 1rem;
+    }
+    .buttons-row button {
+      margin-right: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>BN(O) Visa Travel Tracker</h1>
+  </header>
+  <main>
+    <section id="input-section">
+      <h2>Enter Travel Records</h2>
+      <label for="current-date">Select Today's Date:</label>
+      <input type="date" id="current-date" required />
+      <form id="travel-form">
+        <label for="departure-date">Departure Date:</label>
+        <input type="date" id="departure-date" required />
+
+        <label for="return-date">Return Date:</label>
+        <input type="date" id="return-date" required />
+
+        <button type="button" id="add-trip">Add Trip</button>
+      </form>
+    </section>
+
+    <section id="travel-list">
+      <h2>Your Travel Records</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Departure Date</th>
+            <th>Return Date</th>
+            <th>Days Outside</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="travel-entries">
+          <!-- Travel records will be inserted here -->
+        </tbody>
+      </table>
+    </section>
+
+    <section id="summary">
+      <h2>Summary</h2>
+      <p>Total Days Outside UK: <span id="total-days">0</span></p>
+      <p>Days Remaining (ILR Limit: 180 days in any 12 months): <span id="remaining-ilr">180</span></p>
+      <p>Days Remaining (Citizenship Limit: 450/5 years): <span id="remaining-citizenship">450</span></p>
+      <p>Days Remaining (Last 12 months Citizenship: 90): <span id="remaining-90">90</span></p>
+
+      <div id="progress-bar">
+        <div id="progress"></div>
+      </div>
+
+      <p id="warning" style="display: none;"><strong>Warning:</strong> You have exceeded 180 days outside the UK in the following 12-month periods:</p>
+      <ul id="exceeding-periods" style="display: none;"></ul>
+    </section>
+
+    <section id="export-section" class="buttons-row">
+      <button id="export-csv">Download CSV</button>
+      <button id="save-data">Save Data</button>
+    </section>
+  </main>
+
+  <footer>
+    <p>&copy; 2025 BN(O) Travel Tracker</p>
+  </footer>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      // 1. Set today's date as default
+      const today = new Date();
+      const currentDateInput = document.getElementById("current-date");
+      currentDateInput.valueAsDate = today;
+
+      const departureInputField = document.getElementById("departure-date");
+      const returnInputField = document.getElementById("return-date");
+      departureInputField.valueAsDate = today;
+      returnInputField.valueAsDate = today;
+
+      // 2. Get references to HTML elements
+      const travelEntriesTbody = document.getElementById("travel-entries");
+      const totalDaysSpan = document.getElementById("total-days");
+      const remainingIlrSpan = document.getElementById("remaining-ilr");
+      const remainingCitizenshipSpan = document.getElementById("remaining-citizenship");
+      const remaining90Span = document.getElementById("remaining-90");
+      const warningMessage = document.getElementById("warning");
+      const exceedingPeriodsList = document.getElementById("exceeding-periods");
+      const progressBar = document.getElementById("progress");
+
+      // 3. In-memory data
+      let travelData = [];
+      // Restore from localStorage if available
+      if (localStorage.getItem("travelData")) {
+        try {
+          const parsed = JSON.parse(localStorage.getItem("travelData"));
+          travelData = parsed.map(trip => ({
+            departure: new Date(trip.departure),
+            returnDate: new Date(trip.returnDate),
+            daysOutside: trip.daysOutside
+          }));
+        } catch (e) {
+          travelData = [];
+        }
+      }
+
+      // 4. Update table
+      function updateTable() {
+        travelEntriesTbody.innerHTML = "";
+        travelData.forEach((trip, index) => {
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${trip.departure.toISOString().split("T")[0]}</td>
+            <td>${trip.returnDate.toISOString().split("T")[0]}</td>
+            <td>${trip.daysOutside}</td>
+            <td>
+              <button type="button" onclick="removeTrip(${index})">Remove</button>
+            </td>
+          `;
+          travelEntriesTbody.appendChild(row);
+        });
+      }
+
+      // 5. Update summary
+      function updateSummary() {
+        // We do the 12-month logic for ILR
+        const currentDateVal = new Date(currentDateInput.value);
+        const last12Months = new Date(currentDateVal);
+        last12Months.setFullYear(last12Months.getFullYear() - 1);
+
+        const daysInLast12Months = travelData
+          .filter(trip => trip.departure >= last12Months)
+          .reduce((acc, trip) => acc + trip.daysOutside, 0);
+
+        // Display the total days in the last 12 months as 'totalDays'
+        totalDaysSpan.textContent = daysInLast12Months;
+
+        // ILR days remaining
+        const ilrRemaining = Math.max(180 - daysInLast12Months, 0);
+        remainingIlrSpan.textContent = ilrRemaining;
+
+        // Citizenship logic (just a simple placeholder, you'd refine as needed)
+        let totalOutsideOverall = travelData.reduce((acc, trip) => acc + trip.daysOutside, 0);
+        remainingCitizenshipSpan.textContent = 450 - totalOutsideOverall;
+
+        // For the last 12 months citizenship limit of 90 days
+        remaining90Span.textContent = 90 - daysInLast12Months;
+
+        // Show or hide the warning message
+        if (daysInLast12Months > 180) {
+          warningMessage.style.display = "block";
+          exceedingPeriodsList.style.display = "block";
+          // Show each trip that's within the last 12 months
+          const exceedingTrips = travelData
+            .filter(trip => trip.departure >= last12Months)
+            .map(
+              trip =>
+                `${trip.departure.toISOString().split("T")[0]} to ${
+                  trip.returnDate.toISOString().split("T")[0]
+                }`
+            );
+          exceedingPeriodsList.innerHTML = exceedingTrips
+            .map(period => `<li>${period}</li>`)
+            .join("");
+        } else {
+          warningMessage.style.display = "none";
+          exceedingPeriodsList.style.display = "none";
+          exceedingPeriodsList.innerHTML = "";
+        }
+
+        // Update progress bar for ILR usage (out of 180)
+        const usedPercent = (daysInLast12Months / 180) * 100;
+        progressBar.style.width = Math.min(100, usedPercent) + "%";
+      }
+
+      // 6. Remove trip function - attach to window so inline onclick works
+      window.removeTrip = function(index) {
+        travelData.splice(index, 1);
+        localStorage.setItem("travelData", JSON.stringify(travelData));
+        updateTable();
+        updateSummary();
+      };
+
+      // 7. Add trip button
+      document.getElementById("add-trip").addEventListener("click", () => {
+        const departureInputValue = departureInputField.value;
+        const returnInputValue = returnInputField.value;
+
+        if (!departureInputValue || !returnInputValue) {
+          alert("Please enter both departure and return dates.");
+          return;
+        }
+
+        const departure = new Date(departureInputValue);
+        const returnDate = new Date(returnInputValue);
+        if (returnDate < departure) {
+          alert("Return date cannot be earlier than departure date.");
+          return;
+        }
+
+        const daysOutside = Math.ceil((returnDate - departure) / (1000 * 60 * 60 * 24));
+        travelData.push({ departure, returnDate, daysOutside });
+
+        // Save to localStorage
+        localStorage.setItem("travelData", JSON.stringify(travelData));
+        updateTable();
+        updateSummary();
+      });
+
+      // 8. Save data button
+      document.getElementById("save-data").addEventListener("click", () => {
+        localStorage.setItem("travelData", JSON.stringify(travelData));
+        alert("Data saved locally!");
+      });
+
+      // 9. Download CSV
+      document.getElementById("export-csv").addEventListener("click", () => {
+        if (travelData.length === 0) {
+          alert("No travel data to export.");
+          return;
+        }
+        let csvRows = ["Departure Date,Return Date,Days Outside"];
+        for (let trip of travelData) {
+          const dep = trip.departure.toISOString().split("T")[0];
+          const ret = trip.returnDate.toISOString().split("T")[0];
+          csvRows.push(`${dep},${ret},${trip.daysOutside}`);
+        }
+        const csvString = csvRows.join("\n");
+        const blob = new Blob([csvString], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "travel_history.csv";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      });
+
+      // 10. When user changes 'today’s date', recalc
+      currentDateInput.addEventListener("input", updateSummary);
+
+      // 11. Initial draw
+      updateTable();
+      updateSummary();
+    });
+  </script>
+</body>
+</html>
